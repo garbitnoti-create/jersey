@@ -4,21 +4,25 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 
+const TAILLES = ["XS", "S", "M", "L", "XL", "XXL"];
+const EMPTY_ARTICLE = { type: "normal", taille: "M", qte: 1, flocage: "", reduc: false };
 const EMPTY_FORM = {
-  client: "", type: "normal", qte: 1, flocage: "",
-  mode: "virement", pctPaye: "100", statut: "En attente",
-  prixCustom: "", reduc: false, note: ""
+  client: "",
+  articles: [{ ...EMPTY_ARTICLE }],
+  paiements: [{ mode: "virement", montant: "" }],
+  statut: "En attente",
+  note: "",
+  photos: [],
 };
 
-function calcPrix(type, qte, reduc, prixCustom) {
-  if (prixCustom !== "") return parseFloat(prixCustom) || 0;
+function calcPrixArticle(type, qte, reduc) {
   const base = type === "floque" ? 25 : 20;
   let total = base * parseInt(qte || 1);
   if (reduc && parseInt(qte) >= 2) total -= 5;
   return total;
 }
 
-function coutAchat(type, qte) {
+function coutAchatArticle(type, qte) {
   return (type === "floque" ? 7 : 5) * parseInt(qte || 1);
 }
 
@@ -39,31 +43,68 @@ export default function App() {
     return unsub;
   }, []);
 
-  function f(key, val) {
-    setForm(prev => ({ ...prev, [key]: val }));
+  function updateArticle(i, key, val) {
+    const arts = [...form.articles];
+    arts[i] = { ...arts[i], [key]: val };
+    setForm(f => ({ ...f, articles: arts }));
+  }
+  function addArticle() {
+    setForm(f => ({ ...f, articles: [...f.articles, { ...EMPTY_ARTICLE }] }));
+  }
+  function removeArticle(i) {
+    setForm(f => ({ ...f, articles: f.articles.filter((_, idx) => idx !== i) }));
   }
 
-  const prixAuto = calcPrix(form.type, form.qte, form.reduc, form.prixCustom);
-  const montantPaye = Math.round(prixAuto * parseInt(form.pctPaye) / 100);
-  const resteApayer = prixAuto - montantPaye;
+  function updatePaiement(i, key, val) {
+    const pays = [...form.paiements];
+    pays[i] = { ...pays[i], [key]: val };
+    setForm(f => ({ ...f, paiements: pays }));
+  }
+  function addPaiement() {
+    setForm(f => ({ ...f, paiements: [...f.paiements, { mode: "virement", montant: "" }] }));
+  }
+  function removePaiement(i) {
+    setForm(f => ({ ...f, paiements: f.paiements.filter((_, idx) => idx !== i) }));
+  }
+
+  function handlePhotos(e) {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setForm(f => ({ ...f, photos: [...f.photos, ev.target.result] }));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  function removePhoto(i) {
+    setForm(f => ({ ...f, photos: f.photos.filter((_, idx) => idx !== i) }));
+  }
+
+  const prixTotal = form.articles.reduce((s, a) => s + calcPrixArticle(a.type, a.qte, a.reduc), 0);
+  const montantPaye = form.paiements.reduce((s, p) => s + (parseFloat(p.montant) || 0), 0);
+  const resteApayer = Math.max(0, prixTotal - montantPaye);
 
   async function ajouterCommande() {
     if (!form.client.trim()) return alert("Saisis le nom du client");
     await addDoc(collection(db, "commandes"), {
-      ...form,
-      qte: parseInt(form.qte),
-      pctPaye: parseInt(form.pctPaye),
-      prix: prixAuto,
+      client: form.client,
+      articles: form.articles.map(a => ({ ...a, qte: parseInt(a.qte) })),
+      paiements: form.paiements.map(p => ({ ...p, montant: parseFloat(p.montant) || 0 })),
+      prixTotal,
       montantPaye,
       resteApayer,
+      statut: form.statut,
+      note: form.note,
+      photos: form.photos,
       createdAt: Date.now()
     });
     setShowModal(false);
     setForm(EMPTY_FORM);
   }
 
-  async function solderCommande(id, prix) {
-    await updateDoc(doc(db, "commandes", id), { pctPaye: 100, montantPaye: prix, resteApayer: 0 });
+  async function solderCommande(id, prixTotal) {
+    await updateDoc(doc(db, "commandes", id), { montantPaye: prixTotal, resteApayer: 0 });
   }
 
   async function updateStatut(id, statut) {
@@ -78,15 +119,34 @@ export default function App() {
   const totalEncaisse = commandes.reduce((s, c) => s + (c.montantPaye || 0), 0);
   const resteTotal = commandes.reduce((s, c) => s + (c.resteApayer || 0), 0);
   const nonSoldees = commandes.filter(c => c.resteApayer > 0).length;
-  const totalVir = commandes.filter(c => c.mode === "virement").reduce((s, c) => s + (c.montantPaye || 0), 0);
-  const totalEsp = commandes.filter(c => c.mode === "especes").reduce((s, c) => s + (c.montantPaye || 0), 0);
+  const totalVir = commandes.reduce((s, c) => s + (c.paiements || []).filter(p => p.mode === "virement").reduce((a, p) => a + p.montant, 0), 0);
+  const totalEsp = commandes.reduce((s, c) => s + (c.paiements || []).filter(p => p.mode === "especes").reduce((a, p) => a + p.montant, 0), 0);
   const diff = totalVir - totalEsp;
-  const ca = commandes.reduce((s, c) => s + (c.prix || 0), 0);
-  const achatTotal = commandes.reduce((s, c) => s + coutAchat(c.type, c.qte), 0);
+  const ca = commandes.reduce((s, c) => s + (c.prixTotal || 0), 0);
+  const achatTotal = commandes.reduce((s, c) => s + (c.articles || []).reduce((a, art) => a + coutAchatArticle(art.type, art.qte), 0), 0);
   const benef = ca - achatTotal;
   const benefApresInvest = Math.max(0, benef - invest);
-  const partMoi = Math.round(invest + benefApresInvest * 0.4);
-  const partAmi = Math.round(benefApresInvest * 0.6);
+  const partCoco = Math.round(invest + benefApresInvest * 0.4);
+  const partAdoum = Math.round(benefApresInvest * 0.6);
+
+  function genererPDF(cmd) {
+    const win = window.open("", "_blank");
+    const articles = (cmd.articles || []).map(a =>
+      `<tr><td>${a.type === "floque" ? "Floqué" : "Normal"}</td><td>${a.taille}</td><td>${a.qte}</td><td>${a.flocage || "—"}</td></tr>`
+    ).join("");
+    const photos = (cmd.photos || []).map(p =>
+      `<img src="${p}" style="width:150px;height:150px;object-fit:cover;border-radius:8px;margin:4px">`
+    ).join("");
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Commande ${cmd.client}</title>
+    <style>body{font-family:Arial,sans-serif;padding:30px}table{width:100%;border-collapse:collapse;margin-bottom:20px}th{background:#111;color:#fff;padding:8px;text-align:left}td{padding:8px;border:1px solid #ddd}</style></head>
+    <body><h1>Commande — ${cmd.client}</h1><p>${new Date(cmd.createdAt).toLocaleDateString("fr-FR")} · ${cmd.statut}</p>
+    <table><thead><tr><th>Type</th><th>Taille</th><th>Qté</th><th>Flocage</th></tr></thead><tbody>${articles}</tbody></table>
+    <p><strong>Total : ${cmd.prixTotal}€ · Payé : ${cmd.montantPaye}€ · Reste : ${cmd.resteApayer}€</strong></p>
+    ${cmd.note ? `<p>Note : ${cmd.note}</p>` : ""}
+    ${photos ? `<div><strong>Photos :</strong><br>${photos}</div>` : ""}
+    <script>window.onload=()=>window.print()<\/script></body></html>`);
+    win.document.close();
+  }
 
   const s = styles;
 
@@ -119,34 +179,46 @@ export default function App() {
               <div key={c.id} style={s.card}>
                 <div style={s.cmdHeader}>
                   <span style={s.cmdName}>{c.client}</span>
-                  <span style={s.cmdPrice}>{c.prix}€</span>
+                  <span style={s.cmdPrice}>{c.prixTotal}€</span>
                 </div>
                 <div style={s.cmdDetail}>
-                  {c.qte}x maillot {c.type}{c.flocage ? ` · ${c.flocage}` : ""} · {new Date(c.createdAt).toLocaleDateString("fr-FR")}
+                  {(c.articles || []).map((a, i) => (
+                    <div key={i}>{a.qte}x {a.type === "floque" ? "Floqué" : "Normal"} · {a.taille}{a.flocage ? ` · ${a.flocage}` : ""}</div>
+                  ))}
+                  <div style={{ marginTop: 2 }}>{new Date(c.createdAt).toLocaleDateString("fr-FR")}</div>
                 </div>
+                {(c.photos || []).length > 0 && (
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                    {c.photos.map((p, i) => <img key={i} src={p} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6 }} />)}
+                  </div>
+                )}
                 <div style={s.badges}>
                   <Badge color={c.resteApayer === 0 ? "#2e7d32" : "#c62828"} bg={c.resteApayer === 0 ? "#e8f5e9" : "#ffebee"}>
                     {c.resteApayer === 0 ? "Soldé ✓" : `Reste ${c.resteApayer}€`}
                   </Badge>
-                  <Badge color={c.mode === "virement" ? "#1565c0" : "#e65100"} bg={c.mode === "virement" ? "#e3f2fd" : "#fff3e0"}>
-                    {c.mode === "virement" ? "Virement" : "Espèces"}
-                  </Badge>
+                  {(c.paiements || []).map((p, i) => (
+                    <Badge key={i} color={p.mode === "virement" ? "#1565c0" : "#e65100"} bg={p.mode === "virement" ? "#e3f2fd" : "#fff3e0"}>
+                      {p.mode === "virement" ? "Virement" : "Espèces"} {p.montant}€
+                    </Badge>
+                  ))}
                   <Badge color="#555" bg="#f0f0f0">{c.statut}</Badge>
-                  {c.reduc && <Badge color="#6a1b9a" bg="#f3e5f5">-5€</Badge>}
                 </div>
-                <div style={s.progressLabel}>{c.montantPaye}€ payé sur {c.prix}€ ({c.pctPaye}%)</div>
+                <div style={s.progressLabel}>{c.montantPaye}€ payé sur {c.prixTotal}€</div>
                 <div style={s.progressBar}>
-                  <div style={{ ...s.progressFill, width: `${c.pctPaye}%` }} />
+                  <div style={{ ...s.progressFill, width: `${Math.min(100, Math.round((c.montantPaye / c.prixTotal) * 100))}%` }} />
                 </div>
                 <div style={s.actions}>
                   {c.resteApayer > 0 && (
-                    <button style={{ ...s.btnSm, background: "#e8f5e9", color: "#2e7d32", border: "none" }} onClick={() => solderCommande(c.id, c.prix)}>
+                    <button style={{ ...s.btnSm, background: "#e8f5e9", color: "#2e7d32", border: "none" }} onClick={() => solderCommande(c.id, c.prixTotal)}>
                       Solder {c.resteApayer}€
                     </button>
                   )}
                   <select style={{ ...s.btnSm, cursor: "pointer" }} value={c.statut} onChange={e => updateStatut(c.id, e.target.value)}>
                     {["En attente", "Commandé fournisseur", "Livré"].map(s => <option key={s}>{s}</option>)}
                   </select>
+                  <button style={{ ...s.btnSm, background: "#e3f2fd", color: "#1565c0", border: "none" }} onClick={() => genererPDF(c)}>
+                    PDF fournisseur
+                  </button>
                   <button style={{ ...s.btnSm, background: "#ffebee", color: "#c62828", border: "none" }} onClick={() => supprimerCommande(c.id)}>
                     Supprimer
                   </button>
@@ -160,18 +232,13 @@ export default function App() {
         {!loading && page === "compta" && (
           <>
             <div style={s.card}>
-              <div style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>
-                Virements → toi · Espèces → ton ami
-              </div>
-              <Row label="Virements (toi)" val={totalVir + "€"} />
-              <Row label="Espèces (ton ami)" val={totalEsp + "€"} />
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>Virements → Coco · Espèces → Adoum</div>
+              <Row label="Virements (Coco)" val={totalVir + "€"} />
+              <Row label="Espèces (Adoum)" val={totalEsp + "€"} />
               <div style={{ borderTop: "1px solid #eee", marginTop: 10, paddingTop: 10 }}>
-                <Row
-                  label="Rééquilibrage"
-                  val={diff === 0 ? "Équilibré ✓" : diff > 0 ? `Ton ami te doit ${diff}€` : `Tu dois ${Math.abs(diff)}€ à ton ami`}
-                  color={diff === 0 ? "#2e7d32" : diff > 0 ? "#1565c0" : "#c62828"}
-                  bold
-                />
+                <Row label="Rééquilibrage"
+                  val={diff === 0 ? "Équilibré ✓" : diff > 0 ? `Adoum doit ${diff}€ à Coco` : `Coco doit ${Math.abs(diff)}€ à Adoum`}
+                  color={diff === 0 ? "#2e7d32" : "#1565c0"} bold />
               </div>
             </div>
             <div style={s.sectionTitle}>Détail par commande</div>
@@ -182,9 +249,11 @@ export default function App() {
                   <span style={s.cmdPrice}>{c.montantPaye}€</span>
                 </div>
                 <div style={s.badges}>
-                  <Badge color={c.mode === "virement" ? "#1565c0" : "#e65100"} bg={c.mode === "virement" ? "#e3f2fd" : "#fff3e0"}>
-                    {c.mode === "virement" ? "Virement → toi" : "Espèces → ami"}
-                  </Badge>
+                  {(c.paiements || []).map((p, i) => (
+                    <Badge key={i} color={p.mode === "virement" ? "#1565c0" : "#e65100"} bg={p.mode === "virement" ? "#e3f2fd" : "#fff3e0"}>
+                      {p.mode === "virement" ? `Virement ${p.montant}€ → Coco` : `Espèces ${p.montant}€ → Adoum`}
+                    </Badge>
+                  ))}
                   {c.resteApayer > 0 && <Badge color="#c62828" bg="#ffebee">Reste {c.resteApayer}€</Badge>}
                 </div>
               </div>
@@ -198,24 +267,22 @@ export default function App() {
               <Stat label="Chiffre d'affaires" val={ca + "€"} />
               <Stat label="Coût fournisseur" val={achatTotal + "€"} />
               <Stat label="Bénéfice net" val={benef + "€"} color="#2e7d32" />
-              <Stat label="Commandes livrées" val={commandes.filter(c => c.statut === "Livré").length} />
+              <Stat label="Livrées" val={commandes.filter(c => c.statut === "Livré").length} />
             </div>
             <div style={s.sectionTitle}>Répartition</div>
             <div style={{ ...s.card, marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: "#888" }}>Toi (invest. + 40%)</div>
-              <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4 }}>{partMoi}€</div>
+              <div style={{ fontSize: 12, color: "#888" }}>Coco (invest. + 40%)</div>
+              <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4 }}>{partCoco}€</div>
             </div>
             <div style={{ ...s.card, marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: "#888" }}>Ton ami (60%)</div>
-              <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4 }}>{partAmi}€</div>
+              <div style={{ fontSize: 12, color: "#888" }}>Adoum (60%)</div>
+              <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4 }}>{partAdoum}€</div>
             </div>
             <div style={s.sectionTitle}>Investissement de départ</div>
             <div style={s.card}>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 6 }}>Montant investi (€)</label>
+              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 6 }}>Montant investi par Coco (€)</label>
               <input type="number" min="0" value={invest} onChange={e => setInvest(parseFloat(e.target.value) || 0)} placeholder="0" />
-              <div style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
-                Remboursé en priorité avant la répartition 40/60.
-              </div>
+              <div style={{ fontSize: 12, color: "#888", marginTop: 8 }}>Remboursé en priorité avant la répartition 40/60.</div>
             </div>
           </>
         )}
@@ -227,58 +294,95 @@ export default function App() {
         <div style={s.modalBg} onClick={e => e.target === e.currentTarget && setShowModal(false)}>
           <div style={s.modal}>
             <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 14 }}>Nouvelle commande</h3>
+
             <Field label="Nom du client">
-              <input value={form.client} onChange={e => f("client", e.target.value)} placeholder="Ex: Karim" />
+              <input value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} placeholder="Ex: Karim" />
             </Field>
-            <div style={s.row}>
-              <Field label="Type">
-                <select value={form.type} onChange={e => f("type", e.target.value)}>
-                  <option value="normal">Normal (20€)</option>
-                  <option value="floque">Floqué (25€)</option>
-                </select>
-              </Field>
-              <Field label="Quantité">
-                <input type="number" min="1" value={form.qte} onChange={e => f("qte", e.target.value)} />
-              </Field>
-            </div>
-            <Field label="Flocage (nom, numéro...)">
-              <input value={form.flocage} onChange={e => f("flocage", e.target.value)} placeholder="Ex: MBAPPÉ 10" />
-            </Field>
-            <div style={s.row}>
-              <Field label="Paiement">
-                <select value={form.mode} onChange={e => f("mode", e.target.value)}>
+
+            <div style={s.sectionTitle}>Maillots</div>
+            {form.articles.map((a, i) => (
+              <div key={i} style={{ background: "#f9f9f9", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>Maillot {i + 1}</span>
+                  {form.articles.length > 1 && (
+                    <button onClick={() => removeArticle(i)} style={{ fontSize: 11, color: "#c62828", background: "none", border: "none", cursor: "pointer" }}>Supprimer</button>
+                  )}
+                </div>
+                <div style={s.row}>
+                  <Field label="Type">
+                    <select value={a.type} onChange={e => updateArticle(i, "type", e.target.value)}>
+                      <option value="normal">Normal (20€)</option>
+                      <option value="floque">Floqué (25€)</option>
+                    </select>
+                  </Field>
+                  <Field label="Taille">
+                    <select value={a.taille} onChange={e => updateArticle(i, "taille", e.target.value)}>
+                      {TAILLES.map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <div style={s.row}>
+                  <Field label="Quantité">
+                    <input type="number" min="1" value={a.qte} onChange={e => updateArticle(i, "qte", e.target.value)} />
+                  </Field>
+                  <Field label="Flocage">
+                    <input value={a.flocage} onChange={e => updateArticle(i, "flocage", e.target.value)} placeholder="Ex: MBAPPÉ 10" />
+                  </Field>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, color: "#555" }}>Réduction -5€ (≥2)</span>
+                  <input type="checkbox" checked={a.reduc} onChange={e => updateArticle(i, "reduc", e.target.checked)} style={{ width: "auto" }} />
+                </div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 6 }}>Sous-total : {calcPrixArticle(a.type, a.qte, a.reduc)}€</div>
+              </div>
+            ))}
+            <button onClick={addArticle} style={{ ...s.btnSm, marginBottom: 12, width: "100%", padding: "8px" }}>+ Ajouter un maillot</button>
+
+            <div style={s.sectionTitle}>Paiements</div>
+            {form.paiements.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <select value={p.mode} onChange={e => updatePaiement(i, "mode", e.target.value)} style={{ flex: 1 }}>
                   <option value="virement">Virement / Revolut</option>
                   <option value="especes">Espèces</option>
                 </select>
-              </Field>
-              <Field label="% Payé">
-                <select value={form.pctPaye} onChange={e => f("pctPaye", e.target.value)}>
-                  <option value="100">100% (soldé)</option>
-                  <option value="50">50% (acompte)</option>
-                  <option value="0">0% (pas payé)</option>
-                </select>
-              </Field>
-            </div>
-            <Field label={`Prix de vente (auto: ${prixAuto}€)`}>
-              <input type="number" value={form.prixCustom} onChange={e => f("prixCustom", e.target.value)} placeholder={`${prixAuto}€ (laisser vide = auto)`} />
+                <input type="number" placeholder="Montant €" value={p.montant} onChange={e => updatePaiement(i, "montant", e.target.value)} style={{ flex: 1 }} />
+                {form.paiements.length > 1 && (
+                  <button onClick={() => removePaiement(i)} style={{ color: "#c62828", background: "none", border: "none", cursor: "pointer", fontSize: 18 }}>×</button>
+                )}
+              </div>
+            ))}
+            <button onClick={addPaiement} style={{ ...s.btnSm, marginBottom: 12, width: "100%", padding: "8px" }}>+ Ajouter un paiement</button>
+
+            <Field label="Photos du maillot">
+              <input type="file" accept="image/*" multiple onChange={handlePhotos} />
             </Field>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <span style={{ fontSize: 13, color: "#555" }}>Réduction -5€ (≥2 maillots)</span>
-              <input type="checkbox" checked={form.reduc} onChange={e => f("reduc", e.target.checked)} style={{ width: "auto" }} />
-            </div>
+            {form.photos.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                {form.photos.map((p, i) => (
+                  <div key={i} style={{ position: "relative" }}>
+                    <img src={p} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6 }} />
+                    <button onClick={() => removePhoto(i)} style={{ position: "absolute", top: -4, right: -4, background: "#c62828", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, cursor: "pointer" }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <Field label="Statut commande">
-              <select value={form.statut} onChange={e => f("statut", e.target.value)}>
+              <select value={form.statut} onChange={e => setForm(f => ({ ...f, statut: e.target.value }))}>
                 <option>En attente</option>
                 <option>Commandé fournisseur</option>
                 <option>Livré</option>
               </select>
             </Field>
+
             <Field label="Note">
-              <textarea value={form.note} onChange={e => f("note", e.target.value)} rows={2} placeholder="Ex: flocage long, équipe spéciale..." />
+              <textarea value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} rows={2} placeholder="Ex: flocage long, équipe spéciale..." />
             </Field>
+
             <div style={{ background: "#f5f5f5", borderRadius: 8, padding: "10px 12px", marginBottom: 14, fontSize: 13 }}>
-              💰 Prix : <strong>{prixAuto}€</strong> · Payé : <strong>{montantPaye}€</strong> · Reste : <strong>{resteApayer}€</strong>
+              💰 Total : <strong>{prixTotal}€</strong> · Payé : <strong>{montantPaye}€</strong> · Reste : <strong>{resteApayer}€</strong>
             </div>
+
             <button style={s.btnPrimary} onClick={ajouterCommande}>Ajouter la commande</button>
             <button style={s.btnCancel} onClick={() => { setShowModal(false); setForm(EMPTY_FORM); }}>Annuler</button>
           </div>
@@ -343,7 +447,7 @@ const styles = {
   actions: { display: "flex", gap: 6, flexWrap: "wrap" },
   btnSm: { fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer" },
   note: { fontSize: 12, color: "#888", marginTop: 6 },
-  sectionTitle: { fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, marginTop: 12 },
+  sectionTitle: { fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, marginTop: 4 },
   fab: {
     position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
     width: 200, padding: "13px 0", background: "#111", color: "#fff",
