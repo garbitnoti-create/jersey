@@ -117,25 +117,29 @@ export default function App() {
       body{font-family:Arial,sans-serif;padding:30px;color:#111}
       h1{font-size:20px;margin-bottom:4px}
       .sub{color:#888;font-size:13px;margin-bottom:24px}
-      .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}
-      .item{border:1px solid #ddd;border-radius:8px;padding:12px;text-align:center}
-      .item img{width:140px;height:140px;object-fit:cover;border-radius:6px;margin-bottom:8px;display:block;margin-left:auto;margin-right:auto}
-      .no-photo{width:140px;height:140px;background:#f5f5f5;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#aaa;margin:0 auto 8px}
-      .client{font-size:13px;font-weight:bold;margin-bottom:4px}
-      .detail{font-size:12px;color:#555}
-      .flocage{font-size:14px;font-weight:bold;color:#111;margin-top:6px;background:#f5f5f5;padding:4px 8px;border-radius:4px}
+      table{width:100%;border-collapse:collapse}
+      th{background:#111;color:#fff;padding:10px 12px;text-align:left;font-size:13px}
+      td{padding:10px 12px;border-bottom:1px solid #eee;vertical-align:middle;font-size:13px}
+      tr:nth-child(even) td{background:#fafafa}
+      td img{width:80px;height:80px;object-fit:cover;border-radius:6px;display:block}
+      .no-photo{width:80px;height:80px;background:#f0f0f0;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#aaa}
+      .flocage{font-weight:bold}
+      .num{color:#aaa;font-size:12px}
     </style></head><body>
     <h1>Commande Fournisseur</h1>
     <div class="sub">Généré le ${new Date().toLocaleDateString("fr-FR")} · ${lignes.length} article(s) · ${sel.length} client(s)</div>
-    <div class="grid">
-      ${lignes.map(l => `
-        <div class="item">
-          ${l.photo ? `<img src="${l.photo}">` : `<div class="no-photo">Pas de photo</div>`}
-          <div class="client">${l.client}</div>
-          <div class="detail">${l.type === "floque" ? "Floqué" : "Normal"} · Taille ${l.taille} · Qté ${l.qte}</div>
-          ${l.flocage ? `<div class="flocage">${l.flocage}</div>` : ""}
-        </div>`).join("")}
-    </div>
+    <table>
+      <thead><tr><th>#</th><th>Photo</th><th>Taille</th><th>Flocage</th></tr></thead>
+      <tbody>
+        ${lignes.map((l, idx) => `
+          <tr>
+            <td class="num">${idx + 1}</td>
+            <td>${l.photo ? `<img src="${l.photo}">` : `<div class="no-photo">Pas de photo</div>`}</td>
+            <td><strong>${l.taille}</strong></td>
+            <td class="flocage">${l.flocage || "—"}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
     <script>window.onload=()=>window.print()<\/script>
     </body></html>`;
     const win = window.open("", "_blank");
