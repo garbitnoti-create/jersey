@@ -129,11 +129,10 @@ export default function App() {
     <h1>Commande Fournisseur</h1>
     <div class="sub">Généré le ${new Date().toLocaleDateString("fr-FR")} · ${lignes.length} article(s) · ${sel.length} client(s)</div>
     <table>
-      <thead><tr><th>#</th><th>Photo</th><th>Taille</th><th>Flocage</th></tr></thead>
+      <thead><tr><th>Photo</th><th>Taille</th><th>Flocage</th></tr></thead>
       <tbody>
-        ${lignes.map((l, idx) => `
+        ${lignes.map((l) => `
           <tr>
-            <td class="num">${idx + 1}</td>
             <td>${l.photo ? `<img src="${l.photo}">` : `<div class="no-photo">Pas de photo</div>`}</td>
             <td><strong>${l.taille}</strong></td>
             <td class="flocage">${l.flocage || "—"}</td>
