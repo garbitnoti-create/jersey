@@ -154,8 +154,8 @@ export default function App() {
   const achatTotal = commandes.reduce((s, c) => s + (c.articles || []).reduce((a, art) => a + coutAchat(art.type, art.qte), 0), 0);
   const benef = ca - achatTotal;
   const benefApresInvest = Math.max(0, benef - invest);
-  const partCoco = Math.round(invest + benefApresInvest * 0.4);
-  const partAdoum = Math.round(benefApresInvest * 0.6);
+  const partCoco = Math.round(invest + benefApresInvest * 0.45);
+  const partAdoum = Math.round(benefApresInvest * 0.55);
 
   const s = styles;
 
