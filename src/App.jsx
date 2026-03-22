@@ -3,10 +3,11 @@ import { collection, addDoc, onSnapshot, updateDoc, deleteDoc, doc, orderBy, que
 import { db } from "./firebase";
 
 const TAILLES = ["XS", "S", "M", "L", "XL", "XXL"];
-const EMPTY_ARTICLE = { type: "normal", taille: "M", qte: 1, flocage: "", reduc: false, photo: null };
+const EMPTY_ARTICLE = { type: "normal", taille: "M", qte: 1, flocage: "", reduc: false, photo: null, prixCustom: "" };
 const EMPTY_FORM = { client: "", articles: [{ ...EMPTY_ARTICLE }], paiements: [{ mode: "virement", montant: "" }], statut: "En attente", note: "" };
 
-function calcPrix(type, qte, reduc) {
+function calcPrix(type, qte, reduc, prixCustom) {
+  if (prixCustom && parseFloat(prixCustom) > 0) return parseFloat(prixCustom) * parseInt(qte || 1);
   const base = type === "floque" ? 25 : 20;
   let total = base * parseInt(qte || 1);
   if (reduc && parseInt(qte) >= 2) total -= 5;
@@ -71,7 +72,7 @@ export default function App() {
   function addPay() { setForm(f => ({ ...f, paiements: [...f.paiements, { mode: "virement", montant: "" }] })); }
   function rmPay(i) { setForm(f => ({ ...f, paiements: f.paiements.filter((_, j) => j !== i) })); }
 
-  const prixTotal = form.articles.reduce((s, a) => s + calcPrix(a.type, a.qte, a.reduc), 0);
+  const prixTotal = form.articles.reduce((s, a) => s + calcPrix(a.type, a.qte, a.reduc, a.prixCustom), 0);
   const montantPaye = form.paiements.reduce((s, p) => s + (parseFloat(p.montant) || 0), 0);
   const resteApayer = Math.max(0, prixTotal - montantPaye);
 
@@ -366,6 +367,9 @@ export default function App() {
                   <span style={{ fontSize: 13, color: "#555" }}>Réduction -5€ (≥2)</span>
                   <input type="checkbox" checked={a.reduc} onChange={e => updArt(i, "reduc", e.target.checked)} style={{ width: "auto" }} />
                 </div>
+                <Field label={`Prix unitaire personnalisé (laisser vide = ${a.type === "floque" ? "25" : "20"}€ auto)`}>
+                  <input type="number" min="0" value={a.prixCustom || ""} onChange={e => updArt(i, "prixCustom", e.target.value)} placeholder="Ex: 18" />
+                </Field>
                 <Field label="Photo du maillot">
                   <input type="file" accept="image/*" onChange={e => photoArt(i, e)} />
                 </Field>
@@ -375,7 +379,7 @@ export default function App() {
                     <button onClick={() => updArt(i, "photo", null)} style={{ position: "absolute", top: -4, right: -4, background: "#c62828", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, cursor: "pointer" }}>×</button>
                   </div>
                 )}
-                <div style={{ fontSize: 12, color: "#888", marginTop: 6 }}>Sous-total : {calcPrix(a.type, a.qte, a.reduc)}€</div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 6 }}>Sous-total : {calcPrix(a.type, a.qte, a.reduc, a.prixCustom)}€</div>
               </div>
             ))}
             <button onClick={addArt} style={{ ...s.btnSm, marginBottom: 12, width: "100%", padding: "8px" }}>+ Ajouter un maillot</button>
